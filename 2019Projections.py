@@ -49,26 +49,59 @@ def scrapePlayer(year):
     finalPlayerData = pd.DataFrame(player_data, columns=column_headers[1:])
     finalPlayerData = finalPlayerData[finalPlayerData['Player'].notnull()]
     
-    # put integer type columns into a list
-    listIntCols = ['Age', 'G', 'GS', 'MP', 'FG', 'FGA', '3P',
-           '3PA', '2P', '2PA', 'FT', 'FTA', 'ORB',
-           'DRB', 'TRB', 'AST', 'STL', 'BLK', 'TOV', 'PF', 'PTS']
-    
-    # put float type columns into a list
-    listFloatCols = ['FG%', '3P%', '2P%', 'eFG%', 'FT%']
-    
     #change those columns in the dataframe
     for i in listIntCols:
         finalPlayerData[i] = pd.to_numeric(finalPlayerData[i], downcast = 'integer')
         
-    for j in listFloatCols:
-        finalPlayerData[j] = pd.to_numeric(finalPlayerData[j], downcast = 'float')
+    for i in listFloatCols:
+        finalPlayerData[i] = pd.to_numeric(finalPlayerData[i], downcast = 'float')
     
     finalPlayerData = finalPlayerData.sort_values('PTS', ascending = False)
     finalPlayerData = finalPlayerData.drop_duplicates('Player')
     finalPlayerData = finalPlayerData.reset_index(drop=True)
+        
+    return finalPlayerData
+
+
+def calculateZScores(finalPlayerData):
+    finalPlayerData = finalPlayerData.copy()
+    
+    for i in listIntCols[3:]:
+        finalPlayerData[str(i +'/G')] = finalPlayerData[i]/finalPlayerData['G'] 
+        
+    for i in listIntCols[3:]:
+        finalPlayerData[str(i + 'Z')] = (finalPlayerData[i + '/G'] - finalPlayerData[i + '/G'].mean()) / finalPlayerData[i + '/G'].std()
+    
+    for i in listFloatCols:
+        finalPlayerData[str('w' + i)] = ((finalPlayerData[i] - finalPlayerData[i].mean()) / finalPlayerData[i].std()) * (finalPlayerData['FGA'] / finalPlayerData['FGA'].sum())
+    
+    for i in listFloatCols:
+        finalPlayerData[str(i + 'Z')] = (finalPlayerData['w' + i] - finalPlayerData['w' + i].mean()) / finalPlayerData['w' + i].std()
     
     return finalPlayerData
+
+def ZScoreCopy(yearlyPlayerData):
+    zScoreCopy = yearlyPlayerData.copy()
+    colstoKeep = [cols for cols in zScoreCopy.columns if cols.upper()[-1:] == 'Z']
+    zScoreCopy = zScoreCopy[colstoKeep]
+    
+    return zScoreCopy
+
+def ZScoreDist(zScoreCopy):
+    zCols = list(zScoreCopy.columns)
+    zDist = pd.DataFrame(columns = zCols)
+    for i in zCols:
+        if i == 'TOVZ':
+            zDist[i] = (-1) * zScoreCopy[i] / abs(zScoreCopy[i].max() - zScoreCopy[i].min())
+        else:
+            zDist[i] = zScoreCopy[i] / abs(zScoreCopy[i].max() - zScoreCopy[i].min())
+            
+    return zDist
+    
+def calculateValue(finalZList, leagueStats):
+    finalZList = finalZList.copy()
+    finalZList['LeagueValue'] = finalZList[leagueStats].sum(axis=1)
+    return finalZList
 
 overallPlayerData = pd.DataFrame(columns = ['Player', 'Pos', 'Age', 'Tm', 'G', 
                                             'GS', 'MP', 'FG', 'FGA', 'FG%', 
@@ -77,7 +110,33 @@ overallPlayerData = pd.DataFrame(columns = ['Player', 'Pos', 'Age', 'Tm', 'G',
                                             'ORB', 'DRB', 'TRB', 'AST', 'STL', 
                                             'BLK', 'TOV', 'PF', 'PTS', 'Year'])
         
-for a in range(2000, 2019):
+leagueStats = ['FG%', '3P', 'FT%', 'TRB', 'AST', 'STL', 'BLK', 'TOV', 'PTS']
+
+# put integer type columns into a list
+listIntCols = ['Age', 'G', 'GS', 'MP', 'FG', 'FGA', '3P',
+       '3PA', '2P', '2PA', 'FT', 'FTA', 'ORB',
+       'DRB', 'TRB', 'AST', 'STL', 'BLK', 'TOV', 'PF', 'PTS']
+
+# put float type columns into a list
+listFloatCols = ['FG%', '3P%', '2P%', 'eFG%', 'FT%']
+    
+for i in range(len(leagueStats)):
+    leagueStats[i] = str(leagueStats[i]) + 'Z'
+   
+
+overallPlayerData = pd.DataFrame()
+     
+for a in range(2017, 2019):
     yearlyPlayerData = scrapePlayer(a)
+    yearlyPlayerDataZ = calculateZScores(yearlyPlayerData)
+    zScoreCopy = ZScoreCopy(yearlyPlayerDataZ)
+    zScoreDist = ZScoreDist(zScoreCopy)
+    playerCols = list(yearlyPlayerData.columns[0:5])
     yearlyPlayerData['Year'] = a
-    overallPlayerData = overallPlayerData.append(yearlyPlayerData)
+    ZListFrames = [yearlyPlayerData, zScoreDist]
+    finalZList = pd.concat(ZListFrames, axis = 1)
+    finalZCalculations = calculateValue(finalZList, leagueStats)
+    overallPlayerData = overallPlayerData.append(finalZCalculations)
+
+# save to csv
+overallPlayerData.to_csv("FinalPlayerValues.csv")
